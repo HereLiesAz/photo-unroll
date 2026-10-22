@@ -40,7 +40,7 @@ iosApp/iosApp/   SwiftUI host for the shared UI
 ./gradlew :composeApp:desktopTest                 # imaging tests
 ./gradlew :composeApp:run                         # desktop
 ./gradlew :composeApp:assembleDebug               # Android APK
-./gradlew :composeApp:wasmJsBrowserDevelopmentRun # web
+./gradlew :composeApp:wasmJsBrowserDevelopmentRun # web (installable PWA, offline after first load)
 ~~~
 
 iOS: open an Xcode project at `iosApp/` whose target embeds the `ComposeApp` framework (build phase `./gradlew :composeApp:embedAndSignAppleFrameworkForXcode`) and uses the sources in `iosApp/iosApp/`. The `.xcodeproj` itself is not checked in yet; generate it from `HereLiesAz/compose-multiplatform-template` or Xcode's App template.
