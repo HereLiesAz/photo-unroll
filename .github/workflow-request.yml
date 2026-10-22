@@ -42,10 +42,28 @@ requested: []
 # If the needed capability is absent from the menu, describe the GENERAL workflow
 # to add to HereLiesAz/workflows. This is a request, not executable automation.
 new_workflow_request:
-  name: ""
-  purpose: ""
-  required_inputs: []
+  name: "gradle-pages-deploy"
+  purpose: >-
+    Build a static site with a Gradle task and publish its output directory to
+    GitHub Pages via actions/upload-pages-artifact + actions/deploy-pages.
+    Here: the Compose Multiplatform wasm PWA.
+  required_inputs:
+    - name: gradle_task
+      purpose: Task that produces the static site.
+      example: ":composeApp:wasmJsBrowserDistribution"
+    - name: site_dir
+      purpose: Directory the task writes the site to, uploaded as the Pages artifact.
+      example: "composeApp/build/dist/wasmJs/productionExecutable"
+    - name: java_version
+      purpose: JDK for the Gradle build.
+      example: "17"
+    - name: branch
+      purpose: Branch whose pushes trigger a deploy.
+      example: "main"
+  required_permissions:
+    - "pages: write"
+    - "id-token: write"
+    - "contents: read"
   required_secrets:
-    # - name: EXAMPLE_SECRET
-    #   purpose: Authenticates to Example Service so the workflow can publish artifacts.
+    # None: deploy-pages authenticates with the built-in GITHUB_TOKEN via OIDC.
     []
