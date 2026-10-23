@@ -35,4 +35,15 @@ data class CylinderGuides(
         return if (topY <= bottomY) copy(left = l, right = r)
         else copy(left = l, right = r, topY = bottomY, topBulge = bottomBulge, bottomY = topY, bottomBulge = topBulge)
     }
+
+    companion object {
+        /** Field-by-field median: a few frames with a wrong guess cannot drag the shared one. */
+        fun median(all: List<CylinderGuides>): CylinderGuides {
+            if (all.isEmpty()) return CylinderGuides()
+            fun m(f: (CylinderGuides) -> Float) = all.map(f).sorted().let { (it[(it.size - 1) / 2] + it[it.size / 2]) / 2f }
+            return CylinderGuides(
+                m { it.left }, m { it.right }, m { it.topY }, m { it.topBulge }, m { it.bottomY }, m { it.bottomBulge },
+            )
+        }
+    }
 }

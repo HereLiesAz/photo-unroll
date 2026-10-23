@@ -24,8 +24,8 @@ class StitchResult(
 object Stitcher {
     private const val COARSE_H = 48
     private const val FINE_H = 192
-    private const val MIN_OVERLAP = 0.08f
-    private const val MAX_DY = 0.06f
+    internal const val MIN_OVERLAP = 0.08f
+    internal const val MAX_DY = 0.06f
 
     fun stitch(input: List<WeightedStrip>, closeLoop: Boolean, progress: (Float) -> Unit = {}): StitchResult {
         require(input.isNotEmpty()) { "Nothing to stitch" }
@@ -37,19 +37,22 @@ object Stitcher {
         // votes on it; then every pair is re-aligned with only forward slides allowed,
         // which removes the spurious thin-overlap matches a single pair can produce.
         val votes = links(strips, loop, forwardOnly = false) { progress(0.4f * it) }
-        if (votes.count { it.dx < 0 } * 2 > votes.size) strips = strips.reversed()
+        if (votes.count { it.dx < 0f } * 2 > votes.size) strips = strips.reversed()
         val links = links(strips, loop, forwardOnly = true) { progress(0.4f + 0.4f * it) }
 
         val n = strips.size
-        val xs = IntArray(n)
+        // Offsets accumulate as floats and are rounded once per strip, so measurement error
+        // stays per-strip instead of piling up around a loop.
+        val exact = FloatArray(n)
         val ys = FloatArray(n)
         for (i in 1 until n) {
-            xs[i] = xs[i - 1] + links[i - 1].dx
+            exact[i] = exact[i - 1] + links[i - 1].dx
             ys[i] = ys[i - 1] + links[i - 1].dy
         }
+        val xs = IntArray(n) { exact[it].roundToInt() }
         val canvasW: Int
         if (loop) {
-            canvasW = max(1, links.sumOf { it.dx })
+            canvasW = max(1, links.sumOf { it.dx.toDouble() }.roundToInt())
             // Spread vertical drift so the seam closes without a step.
             val drift = links.sumOf { it.dy.toDouble() }.toFloat()
             for (i in 0 until n) ys[i] -= drift * i / n
@@ -101,7 +104,7 @@ object Stitcher {
     }
 
     /** Offset of strip b's origin relative to strip a's, in a's pixels. */
-    class Link(val dx: Int, val dy: Float)
+    class Link(val dx: Float, val dy: Float)
 
     private fun links(strips: List<WeightedStrip>, loop: Boolean, forwardOnly: Boolean, progress: (Float) -> Unit): List<Link> {
         val count = if (loop) strips.size else strips.size - 1
@@ -129,8 +132,17 @@ object Stitcher {
         val cy = (coarse.second * ratio).roundToInt()
         val fine = search(fa, fb, (cx - r)..(cx + r), (cy - r)..(cy + r))
 
+        // Sub-pixel: the correlation peak is parabolic near its top, so the neighbors on either
+        // side of the best slide say which way, and how far, the true peak lies.
+        val minPixels = max(16, (MIN_OVERLAP * min(fa.w, fb.w) * fa.h / 2).toInt())
+        val sm = ncc(fa, fb, fine.first - 1, fine.second, minPixels).first
+        val s0 = ncc(fa, fb, fine.first, fine.second, minPixels).first
+        val sp = ncc(fa, fb, fine.first + 1, fine.second, minPixels).first
+        val curve = sm - 2 * s0 + sp
+        val offset = if (curve < -1e-6f && sm > -1f && sp > -1f) (0.5f * (sm - sp) / curve).coerceIn(-0.5f, 0.5f) else 0f
+
         val toFull = a.height.toFloat() / fh
-        return Link((fine.first * toFull).roundToInt(), fine.second * toFull)
+        return Link((fine.first + offset) * toFull, fine.second * toFull)
     }
 
     private fun search(a: Plane, b: Plane, dxs: IntRange, dys: IntRange): Pair<Int, Int> {
@@ -150,7 +162,7 @@ object Stitcher {
     }
 
     /** NCC of a(x, y) against b(x - dx, y - dy) over their valid overlap. */
-    private fun ncc(a: Plane, b: Plane, dx: Int, dy: Int, minPixels: Int): Pair<Float, Int> {
+    internal fun ncc(a: Plane, b: Plane, dx: Int, dy: Int, minPixels: Int): Pair<Float, Int> {
         val x0 = max(0, dx); val x1 = min(a.w, dx + b.w)
         val y0 = max(0, dy); val y1 = min(a.h, dy + b.h)
         if (x1 <= x0 || y1 <= y0) return -1f to 0
@@ -173,11 +185,19 @@ object Stitcher {
     }
 
     /** Luma at a working height; -1 marks pixels with no data (outside the source photo). */
-    private class Plane(val w: Int, val h: Int, val v: FloatArray) {
+    internal class Plane(val w: Int, val h: Int, val v: FloatArray) {
         companion object {
             fun of(img: RgbaImage, height: Int): Plane {
                 val h = min(height, img.height)
                 val w = max(1, (img.width * h.toFloat() / img.height).roundToInt())
+                val s = img.resized(w, h)
+                val l = s.luma()
+                for (i in l.indices) if ((s.pixels[i] ushr 24) < 128) l[i] = -1f
+                return Plane(w, h, l)
+            }
+
+            /** Exact size, aspect ignored: both sides of a comparison are squeezed the same way. */
+            fun fixed(img: RgbaImage, w: Int, h: Int): Plane {
                 val s = img.resized(w, h)
                 val l = s.luma()
                 for (i in l.indices) if ((s.pixels[i] ushr 24) < 128) l[i] = -1f

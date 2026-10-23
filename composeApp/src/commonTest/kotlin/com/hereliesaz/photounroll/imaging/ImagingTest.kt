@@ -160,3 +160,131 @@ class EdgeSuggesterTest {
         assertTrue(abs(s.bottomBulge - g.bottomBulge) < tol, "bottomBulge ${s.bottomBulge}")
     }
 }
+
+class PhotoAdjustTest {
+    private fun pattern(w: Int, h: Int) = RgbaImage(w, h, IntArray(w * h) { i ->
+        val g = ((i % w) * 7 + (i / w) * 13) and 0xFF
+        (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+    })
+
+    @Test
+    fun identityReturnsSameImage() {
+        val img = pattern(20, 10)
+        assertTrue(PhotoAdjust().apply(img) === img)
+    }
+
+    @Test
+    fun homographyHitsCorners() {
+        val dst = listOf(NPoint(2f, 3f), NPoint(50f, 1f), NPoint(60f, 40f), NPoint(-5f, 30f))
+        val h = Homography.fromUnitSquare(dst)
+        PhotoAdjust.FULL_FRAME.zip(dst).forEach { (s, d) ->
+            val p = h.map(s.x, s.y)
+            assertTrue(abs(p.x - d.x) < 1e-3f && abs(p.y - d.y) < 1e-3f, "$s -> $p, want $d")
+        }
+    }
+
+    @Test
+    fun quarterTurnMatchesExactRotation() {
+        val img = pattern(16, 16)
+        val turned = PhotoAdjust(rotationDeg = 90f).apply(img)
+        val exact = img.rotated90()
+        var diff = 0
+        for (y in 2 until 14) for (x in 2 until 14) diff += abs(((turned[x, y] shr 8) and 0xFF) - ((exact[x, y] shr 8) and 0xFF))
+        assertTrue(diff / 144 < 2, "mean diff ${diff / 144}")
+    }
+
+    @Test
+    fun warpCropsToQuad() {
+        val img = pattern(40, 40)
+        // Selecting the right half stretches it to fill the frame.
+        val out = PhotoAdjust(quad = listOf(NPoint(0.5f, 0f), NPoint(1f, 0f), NPoint(1f, 1f), NPoint(0.5f, 1f))).apply(img)
+        assertEquals(img.sample(30.25f, 10.5f), out.sample(20.5f, 10.5f))
+    }
+}
+
+class ArrangeTest {
+    private val guides = CylinderGuides(left = 0.25f, right = 0.75f, topY = 0.2f, topBulge = 0.04f, bottomY = 0.85f, bottomBulge = 0.06f)
+
+    /** Pink-noise-like surface: many harmonics with fixed pseudo-random phases, so no two views alias. */
+    private val harmonics = run {
+        var seed = 12345L
+        fun next(): Double { seed = (seed * 6364136223846793005L + 1442695040888963407L); return ((seed ushr 33) % 10000) / 10000.0 }
+        List(60) { i -> doubleArrayOf((i + 1).toDouble(), 1.0 / (i + 1) * 0.9 + 0.02, next() * 2 * PI, (next() - 0.5) * 8) }
+    }
+
+    private fun texture(u: Double, v: Double): Int {
+        var s = 0.0
+        var norm = 0.0
+        for (h in harmonics) { s += h[1] * sin(h[0] * u + h[2] + h[3] * v); norm += h[1] * h[1] }
+        val g = (128 + 120 * s / kotlin.math.sqrt(norm)).roundToInt().coerceIn(0, 255)
+        return (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+    }
+
+    private fun render(phi: Double, w: Int = 400, h: Int = 300): RgbaImage {
+        val img = RgbaImage(w, h, IntArray(w * h) { 0xFF404040.toInt() })
+        val r = (guides.right - guides.left) * w / 2.0
+        val cx = (guides.left + guides.right) * w / 2.0
+        for (x in 0 until w) {
+            val sx = (x + 0.5 - cx) / r
+            if (abs(sx) >= 1) continue
+            val theta = asin(sx)
+            val c = cos(theta)
+            val yt = (guides.topY + guides.topBulge * c) * h
+            val yb = (guides.bottomY + guides.bottomBulge * c) * h
+            for (y in 0 until h) {
+                val v = (y + 0.5 - yt) / (yb - yt)
+                if (v in 0.0..1.0) img[x, y] = texture(theta + phi, v)
+            }
+        }
+        return img
+    }
+
+    /** True when [order] walks the ring one step at a time, in either direction. */
+    private fun isRingOrder(order: IntArray, n: Int): Boolean {
+        fun step(a: Int, b: Int) = (b - a + n) % n
+        val steps = (0 until order.size - 1).map { step(order[it], order[it + 1]) }
+        return steps.all { it == 1 } || steps.all { it == n - 1 }
+    }
+
+    @Test
+    fun shuffledWalkAroundIsPutBackInOrder() {
+        val n = 10
+        val shuffle = intArrayOf(6, 2, 9, 0, 4, 7, 1, 8, 3, 5)
+        val photos = shuffle.map { render(2 * PI * it / n) }
+        val order = Pipelines.arrangeCylinder(photos, List(n) { guides }, 60f)
+        val recovered = IntArray(n) { shuffle[order[it]] }
+        // A ring has no start: the path may begin anywhere, so check it as a cyclic walk.
+        val steps = (0 until n - 1).map { (recovered[it + 1] - recovered[it] + n) % n }
+        assertTrue(steps.all { it == 1 } || steps.all { it == n - 1 }, "recovered ${recovered.toList()}")
+    }
+
+    @Test
+    fun partialArcKeepsItsOrder() {
+        val shuffle = intArrayOf(3, 0, 4, 1, 2)
+        val photos = shuffle.map { render(0.5 * it) }
+        val order = Pipelines.arrangeCylinder(photos, List(5) { guides }, 60f)
+        val recovered = order.map { shuffle[it] }
+        assertTrue(recovered == listOf(0, 1, 2, 3, 4) || recovered == listOf(4, 3, 2, 1, 0), "recovered $recovered")
+    }
+
+    @Test
+    fun overshotVideoIsCutAtOneTurn() {
+        // 48 frames across 1.25 turns: frame 38.4 would be the first view again.
+        val total = 48
+        val photos = (0 until total).map { render(2 * PI * 1.25 * it / total) }
+        val strips = photos.map { CylinderUnroller.unroll(it, guides, 60f).image }
+        val keep = Arranger.framesInOneTurn(strips)
+        assertTrue(keep in 34..39, "kept $keep")
+        val result = Pipelines.unrollCylinder(photos, List(total) { guides }, 60f, fullTurn = true, trimToTurn = true)
+        val expected = 2 * PI * (guides.right - guides.left) * 400 / 2
+        assertTrue(abs(result.image.width - expected) / expected < 0.04, "width ${result.image.width} vs $expected")
+    }
+
+    @Test
+    fun undershotVideoIsLeftAlone() {
+        val total = 30
+        val photos = (0 until total).map { render(2 * PI * 0.9 * it / total) }
+        val strips = photos.map { CylinderUnroller.unroll(it, guides, 60f).image }
+        assertEquals(total, Arranger.framesInOneTurn(strips))
+    }
+}
