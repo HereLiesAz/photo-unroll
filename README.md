@@ -29,6 +29,20 @@ Photos are put in capture order on import (and by **ORDER**), whatever order the
 
 Each photo has **Rotate** (any angle, level grid, live preview) and **Warp** (drag four corners onto something that should be rectangular) tabs. Both are applied in one resample from the untouched original, before guides, unrolling and stitching.
 
+### Touch
+
+Built for fingers first; a mouse gets the same gestures.
+
+| Gesture | Where | Does |
+| ------- | ----- | ---- |
+| Drag a handle | guides, warp | Moves it from the first pixel (no slop delay), keeping the grab offset. A **loupe** (2.5×) floats above the fingertip showing what it covers. |
+| Pinch / mouse wheel | editors, result | Zoom about the fingers (editors to 8×). |
+| Two-finger drag | editors | Pan. One finger pans too once zoomed in and not on a handle. |
+| Two-finger twist | rotate | Turns the photo. Snaps to square (0/±90/180°) within 1.5°. |
+| Drag / fling, pinch, double-tap | result | Scroll the strip (wraps forever when seamless); zoom; toggle 1× / 2.5×. |
+
+Warp corners snap to the photo's own edges; snaps (and picking up a handle) give a haptic tick where the platform has one (Android, iOS). Every control is at least 48 dp; thumbnails are 80 dp with a separate corner target to remove, **+ PHOTOS** / **+ VIDEO** are tiles at the end of the strip, and the action row scrolls sideways instead of wrapping on a narrow screen. On the web, `touch-action: none` and `overscroll-behavior: none` keep the browser from scrolling, pull-to-refresh or zooming the page underneath.
+
 ## Layout
 
 ~~~
@@ -46,7 +60,7 @@ composeApp/src/
                  Exif                 orientation tag reader
                  Pipelines            the end-to-end operations
                video/  VideoFrames (expect), frame count policy
-               ui/  GuideEditor, AdjustEditors, StripViewer, Theme
+               ui/  Touch (zoom/pan state, gesture loop, loupe), GuideEditor, AdjustEditors, StripViewer, Theme
                App.kt, AppState.kt
   skiaMain/        codec for desktop, iOS, web (Skia)
   androidMain/     codec (Bitmap), video (MediaMetadataRetriever), MainActivity
