@@ -61,10 +61,13 @@ fun App() = PhotoUnrollTheme {
     val picker = rememberFilePickerLauncher(type = FileKitType.Image, mode = FileKitMode.Multiple()) { files ->
         if (!files.isNullOrEmpty()) state.import(files)
     }
+    val videoPicker = rememberFilePickerLauncher(type = FileKitType.Video, mode = FileKitMode.Single) { file ->
+        if (file != null) state.importVideo(file)
+    }
     val save = rememberJpegSaver()
 
     Column(Modifier.fillMaxSize().background(Ink.Black).safeDrawingPadding().padding(12.dp)) {
-        Header(state, onAdd = { picker.launch() })
+        Header(state, onAdd = { picker.launch() }, onAddVideo = { videoPicker.launch() })
         Spacer(Modifier.height(8.dp))
         state.progress?.let {
             LinearProgressIndicator(
@@ -88,7 +91,7 @@ fun App() = PhotoUnrollTheme {
 }
 
 @Composable
-private fun Header(state: AppState, onAdd: () -> Unit) {
+private fun Header(state: AppState, onAdd: () -> Unit, onAddVideo: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Mode.entries.forEach { m ->
             Text(
@@ -102,6 +105,7 @@ private fun Header(state: AppState, onAdd: () -> Unit) {
             )
         }
         Spacer(Modifier.weight(1f))
+        TextButton(onClick = onAddVideo, enabled = !state.busy && state.result == null) { Text("+ VIDEO") }
         TextButton(onClick = onAdd, enabled = !state.busy && state.result == null) { Text("+ PHOTOS") }
     }
 }
@@ -193,9 +197,11 @@ private fun Editor(state: AppState, modifier: Modifier) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = state::autoGuides, enabled = !state.busy) { Text("AUTO-DETECT") }
                 TextButton(onClick = state::applyGuidesToAll, enabled = !state.busy) { Text("APPLY TO ALL") }
+                TextButton(onClick = state::arrange, enabled = !state.busy && state.canArrange) { Text("ORDER") }
             }
         } else {
             LabeledSlider("LENS FOV ${state.hfov.roundToInt()}°", state.hfov, 30f..120f) { state.hfov = it }
+            TextButton(onClick = state::arrange, enabled = !state.busy && state.canArrange) { Text("ORDER") }
         }
 
         Row(verticalAlignment = Alignment.CenterVertically) {
