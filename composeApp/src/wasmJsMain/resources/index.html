@@ -2,13 +2,28 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="theme-color" content="#000000">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Photo Unroll</title>
     <link rel="manifest" href="manifest.webmanifest">
     <link rel="icon" href="icon-192.png">
     <link rel="apple-touch-icon" href="icon-192.png">
-    <style>html, body { margin: 0; height: 100%; background: #000; }</style>
+    <style>
+        html, body { margin: 0; height: 100%; background: #000; }
+        /* The app handles every gesture itself: the browser must not scroll, pull-to-refresh,
+           zoom the page, select text, or flash a tap highlight underneath it. */
+        html, body, canvas {
+            touch-action: none;
+            overscroll-behavior: none;
+            -webkit-user-select: none; user-select: none;
+            -webkit-touch-callout: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+        body { position: fixed; inset: 0; overflow: hidden; }
+    </style>
     <script type="application/javascript" src="composeApp.js"></script>
     <script>
         if ('serviceWorker' in navigator) {
