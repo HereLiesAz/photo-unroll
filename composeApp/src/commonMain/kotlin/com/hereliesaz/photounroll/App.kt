@@ -29,7 +29,10 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -38,7 +41,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.hereliesaz.photounroll.imaging.PhotoAdjust
 import com.hereliesaz.photounroll.ui.GuideEditor
+import com.hereliesaz.photounroll.ui.RotatePreview
+import com.hereliesaz.photounroll.ui.WarpEditor
 import com.hereliesaz.photounroll.ui.Ink
 import com.hereliesaz.photounroll.ui.PhotoUnrollTheme
 import com.hereliesaz.photounroll.ui.StripViewer
@@ -120,19 +126,69 @@ private fun Empty(mode: Mode, modifier: Modifier) {
 @Composable
 private fun Editor(state: AppState, modifier: Modifier) {
     val photo = state.current ?: return
+    // Slider position while dragging; committed (and resampled) on release.
+    var liveAngle by remember(photo, photo.adjust.rotationDeg) { mutableStateOf(photo.adjust.rotationDeg) }
     Column(modifier) {
+        Row {
+            Tool.entries.forEach { t ->
+                val label = if (t == Tool.Main && state.mode == Mode.Panorama) "VIEW" else t.label
+                Text(
+                    label,
+                    color = if (t == state.tool) Ink.Bone else Ink.Smoke,
+                    fontWeight = if (t == state.tool) FontWeight.Bold else FontWeight.Normal,
+                    letterSpacing = 2.sp,
+                    fontSize = 13.sp,
+                    modifier = Modifier.clickable { state.tool = t }.padding(horizontal = 8.dp, vertical = 6.dp),
+                )
+            }
+        }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (state.mode == Mode.Unroll) {
-                GuideEditor(photo.bitmap, photo.guides, { photo.guides = it }, Modifier.fillMaxSize())
-            } else {
-                Image(photo.bitmap, photo.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
+            when {
+                state.tool == Tool.Rotate ->
+                    RotatePreview(photo.originalBitmap, liveAngle, Modifier.fillMaxSize())
+                state.tool == Tool.Warp ->
+                    WarpEditor(
+                        photo.rotatedBitmap, photo.adjust.quad,
+                        { state.setAdjust(photo, photo.adjust.copy(quad = it)) },
+                        Modifier.fillMaxSize(),
+                    )
+                state.mode == Mode.Unroll ->
+                    GuideEditor(photo.bitmap, photo.guides, { photo.guides = it }, Modifier.fillMaxSize())
+                else ->
+                    Image(photo.bitmap, photo.name, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
             }
         }
         Spacer(Modifier.height(8.dp))
         Thumbnails(state)
         Spacer(Modifier.height(8.dp))
 
-        if (state.mode == Mode.Unroll) {
+        if (state.tool == Tool.Rotate) {
+            Column {
+                Text("ROTATE ${((liveAngle * 10).roundToInt() / 10f)}°", color = Ink.Smoke, letterSpacing = 2.sp, fontSize = 13.sp)
+                Slider(
+                    value = liveAngle,
+                    onValueChange = { liveAngle = it },
+                    onValueChangeFinished = { state.setAdjust(photo, photo.adjust.copy(rotationDeg = liveAngle)) },
+                    valueRange = -180f..180f,
+                    colors = SliderDefaults.colors(thumbColor = Ink.Bone, activeTrackColor = Ink.Bone, inactiveTrackColor = Ink.Ash),
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                fun turn(by: Float) {
+                    val a = ((photo.adjust.rotationDeg + by + 540f) % 360f) - 180f
+                    state.setAdjust(photo, photo.adjust.copy(rotationDeg = a))
+                }
+                TextButton(onClick = { turn(-90f) }) { Text("−90°") }
+                TextButton(onClick = { turn(90f) }) { Text("+90°") }
+                TextButton(onClick = { state.setAdjust(photo, photo.adjust.copy(rotationDeg = 0f)) }) { Text("RESET") }
+                TextButton(onClick = state::applyAdjustToAll, enabled = !state.busy) { Text("APPLY TO ALL") }
+            }
+        } else if (state.tool == Tool.Warp) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { state.setAdjust(photo, photo.adjust.copy(quad = PhotoAdjust.FULL_FRAME)) }) { Text("RESET") }
+                TextButton(onClick = state::applyAdjustToAll, enabled = !state.busy) { Text("APPLY TO ALL") }
+            }
+        } else if (state.mode == Mode.Unroll) {
             LabeledSlider("ARC ±${state.unrollAngle.roundToInt()}°", state.unrollAngle, 20f..85f) { state.unrollAngle = it }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = state::autoGuides, enabled = !state.busy) { Text("AUTO-DETECT") }

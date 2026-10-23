@@ -9,6 +9,7 @@ import com.hereliesaz.photounroll.imaging.CylinderGuides
 import com.hereliesaz.photounroll.imaging.EdgeSuggester
 import com.hereliesaz.photounroll.imaging.ImageCodec
 import com.hereliesaz.photounroll.imaging.Pipelines
+import com.hereliesaz.photounroll.imaging.PhotoAdjust
 import com.hereliesaz.photounroll.imaging.Rendered
 import com.hereliesaz.photounroll.imaging.RgbaImage
 import com.hereliesaz.photounroll.imaging.loadPhoto
@@ -26,10 +27,28 @@ enum class Mode(val label: String, val action: String) {
     Panorama("PANORAMA", "Stitch"),
 }
 
-/** One imported photo. Guides are per photo because the object drifts in frame as you walk. */
-class Photo(val name: String, val image: RgbaImage, val bitmap: ImageBitmap, guides: CylinderGuides) {
+/**
+ * One imported photo. Guides are per photo because the object drifts in frame as you walk.
+ * [original] is never modified; [image] is it after [adjust] (rotation + perspective), and is
+ * what guides, unrolling and stitching see. [rotatedBitmap] is the rotation alone, the canvas
+ * the warp corners are picked on.
+ */
+class Photo(val name: String, val original: RgbaImage, guides: CylinderGuides) {
     var guides by mutableStateOf(guides)
+    var adjust by mutableStateOf(PhotoAdjust())
+        internal set
+    var image by mutableStateOf(original)
+        internal set
+    var bitmap by mutableStateOf(ImageCodec.toImageBitmap(original))
+        internal set
+    var rotatedBitmap by mutableStateOf(bitmap)
+        internal set
+    val originalBitmap: ImageBitmap = bitmap
+    internal var adjustJob: Job? = null
 }
+
+/** What the editor canvas is for: guides (or plain view in panorama), rotation, or perspective. */
+enum class Tool(val label: String) { Main("GUIDES"), Rotate("ROTATE"), Warp("WARP") }
 
 class Result(val rendered: Rendered, val bitmap: ImageBitmap, val mode: Mode)
 
@@ -38,6 +57,7 @@ class AppState(private val scope: CoroutineScope) {
     var mode by mutableStateOf(Mode.Unroll)
     val photos = mutableStateListOf<Photo>()
     var selected by mutableStateOf(0)
+    var tool by mutableStateOf(Tool.Main)
 
     /** Half-arc kept from each walk-around photo. */
     var unrollAngle by mutableStateOf(60f)
@@ -63,7 +83,7 @@ class AppState(private val scope: CoroutineScope) {
             val bytes = file.readBytes()
             val photo = withContext(Dispatchers.Default) {
                 val img = loadPhoto(bytes)
-                Photo(file.name, img, ImageCodec.toImageBitmap(img), EdgeSuggester.suggest(img))
+                Photo(file.name, img, EdgeSuggester.suggest(img))
             }
             photos += photo
         }
@@ -79,16 +99,45 @@ class AppState(private val scope: CoroutineScope) {
         task { p.guides = withContext(Dispatchers.Default) { EdgeSuggester.suggest(p.image) } }
     }
 
+    /**
+     * Re-renders [photo] with [adjust] off the main thread. Superseded renders are cancelled,
+     * so dragging a slider only pays for the last value.
+     */
+    fun setAdjust(photo: Photo, adjust: PhotoAdjust) {
+        if (adjust == photo.adjust) return
+        photo.adjust = adjust
+        photo.adjustJob?.cancel()
+        photo.adjustJob = scope.launch {
+            val rotationOnly = adjust.copy(quad = PhotoAdjust.FULL_FRAME)
+            val (img, bmp, rot) = withContext(Dispatchers.Default) {
+                val img = adjust.apply(photo.original)
+                val rot = if (rotationOnly == adjust) img else rotationOnly.apply(photo.original)
+                val bmp = ImageCodec.toImageBitmap(img)
+                Triple(img, bmp, if (rot === img) bmp else ImageCodec.toImageBitmap(rot))
+            }
+            photo.image = img
+            photo.bitmap = bmp
+            photo.rotatedBitmap = rot
+        }
+    }
+
+    fun applyAdjustToAll() {
+        val a = current?.adjust ?: return
+        photos.forEach { setAdjust(it, a) }
+    }
+
     fun applyGuidesToAll() {
         val g = current?.guides ?: return
         photos.forEach { it.guides = g }
     }
 
     fun process() {
-        val snapshot = photos.toList()
-        if (snapshot.isEmpty()) return
+        if (photos.isEmpty()) return
         val m = mode
         task {
+            // A rotation or warp may still be rendering; unroll what the user last set.
+            photos.forEach { it.adjustJob?.join() }
+            val snapshot = photos.toList()
             val rendered = withContext(Dispatchers.Default) {
                 val report: (Float) -> Unit = { progress = it }
                 when (m) {

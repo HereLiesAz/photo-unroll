@@ -160,3 +160,44 @@ class EdgeSuggesterTest {
         assertTrue(abs(s.bottomBulge - g.bottomBulge) < tol, "bottomBulge ${s.bottomBulge}")
     }
 }
+
+class PhotoAdjustTest {
+    private fun pattern(w: Int, h: Int) = RgbaImage(w, h, IntArray(w * h) { i ->
+        val g = ((i % w) * 7 + (i / w) * 13) and 0xFF
+        (0xFF shl 24) or (g shl 16) or (g shl 8) or g
+    })
+
+    @Test
+    fun identityReturnsSameImage() {
+        val img = pattern(20, 10)
+        assertTrue(PhotoAdjust().apply(img) === img)
+    }
+
+    @Test
+    fun homographyHitsCorners() {
+        val dst = listOf(NPoint(2f, 3f), NPoint(50f, 1f), NPoint(60f, 40f), NPoint(-5f, 30f))
+        val h = Homography.fromUnitSquare(dst)
+        PhotoAdjust.FULL_FRAME.zip(dst).forEach { (s, d) ->
+            val p = h.map(s.x, s.y)
+            assertTrue(abs(p.x - d.x) < 1e-3f && abs(p.y - d.y) < 1e-3f, "$s -> $p, want $d")
+        }
+    }
+
+    @Test
+    fun quarterTurnMatchesExactRotation() {
+        val img = pattern(16, 16)
+        val turned = PhotoAdjust(rotationDeg = 90f).apply(img)
+        val exact = img.rotated90()
+        var diff = 0
+        for (y in 2 until 14) for (x in 2 until 14) diff += abs(((turned[x, y] shr 8) and 0xFF) - ((exact[x, y] shr 8) and 0xFF))
+        assertTrue(diff / 144 < 2, "mean diff ${diff / 144}")
+    }
+
+    @Test
+    fun warpCropsToQuad() {
+        val img = pattern(40, 40)
+        // Selecting the right half stretches it to fill the frame.
+        val out = PhotoAdjust(quad = listOf(NPoint(0.5f, 0f), NPoint(1f, 0f), NPoint(1f, 1f), NPoint(0.5f, 1f))).apply(img)
+        assertEquals(img.sample(30.25f, 10.5f), out.sample(20.5f, 10.5f))
+    }
+}
