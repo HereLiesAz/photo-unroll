@@ -1,34 +1,23 @@
-# Publishes the web build (installable PWA) to this repository's GitHub Pages.
-# Bound to HereLiesAz/workflows/.github/workflows/github-pages-deploy.yml, which builds
-# centrally and pushes the site to gh-pages; this file is the trigger contract.
+# centralized-by: HereLiesAz/workflows
+# central-source-path: .github/workflows/github-pages-deploy.yml
+# central-source-sha256: 9bd5fb364cd651740b033f1ecb695a2d30320c49855e4d4adb8a0db0304c964a
+# This file intentionally contains no repository secrets.
+# central-run-tracker: HereLiesAz/workflows
 name: GitHub Pages Deploy
 on:
   push:
     branches: [main]
   workflow_dispatch:
-permissions:
-  contents: write
-concurrency:
-  group: github-pages-deploy
-  cancel-in-progress: false
+permissions: {}
 jobs:
-  deploy:
+  central:
+    name: Hand-off
     runs-on: ubuntu-latest
+    timeout-minutes: 2
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew :composeApp:wasmJsBrowserDistribution --no-daemon
-      - name: Publish to gh-pages
+      - name: Point to central result
         env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          cd composeApp/build/dist/wasmJs/productionExecutable
-          touch .nojekyll
-          git init -q -b gh-pages
-          git add -A
-          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -qm "Deploy ${GITHUB_SHA}"
-          git push -q --force "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:refs/heads/gh-pages
+          STATUS_CONTEXT: .github/workflows/github-pages-deploy.yml
+          TARGET_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        shell: bash
+        run: "set -euo pipefail\n# The build runs in HereLiesAz/workflows. Its result is reported on this commit as the\n# commit status named below: pending when the central run starts, then success or\n# failure. This job only points there and ends, so it never holds a runner while the\n# central run waits for one. (Trackers that followed the central run job-by-job held a\n# runner each for the whole build; under the account's concurrent-job limit they\n# starved the very runs they were waiting on: 2026-10-01, illumera waited 3h to start.)\n# No status at all means the gateway intentionally skipped this event.\n{\n  echo \"### Runs in HereLiesAz/workflows\"\n  echo\n  echo \"Result: commit status \\`$STATUS_CONTEXT\\` on \\`$TARGET_SHA\\`.\"\n  echo \"Central runs: $GITHUB_SERVER_URL/HereLiesAz/workflows/actions\"\n} >> \"$GITHUB_STEP_SUMMARY\"\necho \"Result is reported as commit status '$STATUS_CONTEXT' on $TARGET_SHA.\"\n"
